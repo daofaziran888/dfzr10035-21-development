@@ -68,6 +68,7 @@ npm run dev
 | 数据版本 | `data_version` | 数据快照 | 版本编号、数据来源、行数统计 |
 | 管道审计 | `pipeline_audit` | 审计记录 | 记录编号、管道名称、操作人 |
 | 治理报告 | `govern_report` | 治理报告 | 报告编号、评估范围、合规指标 |
+| 采集异常组 | `collection_gap` | 采集异常组 | 组编号、管道名称、复核记录编号、区间起点、区间终点 |
 | 增量追踪 | `incr_tracker` | 增量标记 | 标记编号、目标端点、增量字段 |
 | 抽样校验 | `sample_check` | 抽样计划 | 计划编号、目标端点、抽样比例 |
 | 用量计费 | `cost_account` | 用量账单 | 账单编号、提供方、计费周期 |
@@ -80,6 +81,24 @@ npm run dev
   `frontend/src/domain/<模块>.ts`，用于承载真实业务差异并维持36题位容量。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 采集缺口复核
+
+`collection_gap` 模块负责把「管道复核记录 → 采集证据 → 待核对异常组 → 补采派发」串起来：
+
+- 检索：`GET /api/collection-gap/search` 支持按复核记录编号、管道名称、异常区间筛选；
+  同管道重复上报同一段缺口的异常组折叠为同一事实，`include_duplicates=true` 时仍可逐条核对。
+- 证据：`collection_evidence` 表保存在 `backend/app/seed_collection_gap.py`；
+  结论为成功的证据（含审计更正）会从上报区间里扣减，得到真实仍缺的区间。
+- 标定：`POST /api/collection-gap/mark-collected` 提交前把一段区间标成已实采，同一管道同一区间只计一次。
+- 调整：`POST /api/collection-gap/{id}/range-adjust` 调整范围后按证据重新判定仍缺的数据。
+- 派发：`POST /api/collection-gap/dispatch` 按选中异常组生成治理报告和重放队列补采任务；
+  管道 + 实际缺口区间是幂等键，同一事实被多次驳回也只保留一个补采任务。
+  派发中断时检索条件先落库，`POST /api/collection-gap/dispatch/{id}/retry` 沿原条件续派。
+- 回写：派发结果写回 `pipeline_audit` 复核清单（待派发区间、重放任务、治理报告、影响证据）；
+  `GET /api/collection-gap/verify` 一次性核对检索结果、治理记录可执行区间和采集任务。
+
+前端独立工作台：`frontend/src/views/CollectionGapView.vue`（路由 `/collection_gap`）。
 
 领域：数据工程
 子方向：数据采集、爬虫与RPA

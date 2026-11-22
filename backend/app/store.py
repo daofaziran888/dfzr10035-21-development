@@ -7,16 +7,26 @@ from __future__ import annotations
 from typing import Any
 
 from app.seed import SEED_ROWS
+from app.seed_collection_gap import AUX_TABLES, EXTRA_ROWS_BY_MODULE, EXTRA_SEED_ROWS
+
+
+def _initial_tables() -> dict[str, list[dict[str, Any]]]:
+    tables = {name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()}
+    for module, extra_rows in EXTRA_ROWS_BY_MODULE.items():
+        bucket = tables.setdefault(module, [])
+        bucket.extend(dict(row) for row in extra_rows)
+    for module, rows in EXTRA_SEED_ROWS.items():
+        tables.setdefault(module, []).extend(dict(row) for row in rows)
+    return tables
 
 
 class Store:
     def __init__(self) -> None:
-        self._tables: dict[str, list[dict[str, Any]]] = {
-            name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
-        }
+        self._tables: dict[str, list[dict[str, Any]]] = _initial_tables()
 
     def module_names(self) -> list[str]:
-        return sorted(self._tables)
+        """业务模块名；复核工作台的内部证据/派发流水不计入模块概览。"""
+        return sorted(name for name in self._tables if name not in AUX_TABLES)
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])

@@ -84,9 +84,22 @@ class PipelineAuditService(BaseModuleService):
         })
 
     def _create_retry_and_govern(self, audit: dict):
-        """驳回时创建重放任务触发重采。"""
+        """驳回时创建重放任务触发重采；同一管道同一区间只保留一个补采任务。"""
         rid = str(audit["id"]).zfill(4)
         retry_rows = store.rows("retry_queue")
+        signature = str(audit.get("待派发区间") or "").strip()
+        for task in retry_rows:
+            if (
+                task.get("采集管道") == audit.get("管道名称", "")
+                and task.get("采集区间") == signature
+                and signature
+            ):
+                # 已经为同一事实建过补采，驳回只重开原任务，不重复补采。
+                task["status"] = "待重试"
+                task["pending"] = True
+                task["abnormal"] = True
+                task["反驳次数"] = int(task.get("反驳次数", 0)) + 1
+                return
         retry_rows.append({
             "id": max((int(r.get("id", 0)) for r in retry_rows), default=0) + 1,
             "任务编号": f"RETR-AUDIT-{rid}",
@@ -97,6 +110,9 @@ class PipelineAuditService(BaseModuleService):
             "退避策略": "fixed:5s",
             "最后重试": "",
             "队列状态": "audit_reject",
+            "采集管道": audit.get("管道名称", "") if signature else "",
+            "采集区间": signature,
+            "关联复核记录": audit.get("记录编号", "") if signature else "",
             "status": "待重试", "pending": True, "abnormal": True,
         })
 
